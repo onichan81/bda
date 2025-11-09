@@ -1,1 +1,1020 @@
+Exp 2: 
+
+This Python script uses the mrjob library to implement a MapReduce job. Its purpose is to analyze a log file (system_logs.txt) to calculate the total time each user spent logged in.
+
+It works by:
+
+Mapping: Reading each log line and tagging it with the user as the key.
+
+Shuffling: Grouping all log entries for the same user together.
+
+Reducing: For each user, sorting their events by time and calculating the duration between "login" and "logout" pairs.
+
+Finally, it outputs each user's total session time in hours.
+
+📚 Theory: MapReduce & mrjob (For Your Exam)
+What is MapReduce?
+
+MapReduce is a programming model designed for processing and generating large datasets in parallel across a distributed cluster of computers. It's the concept that powers frameworks like Apache Hadoop.
+
+A MapReduce job is split into three main phases:
+
+📍 Map Phase:
+
+Input: Takes a chunk of the raw input data (e.g., lines from a file).
+
+Process: A mapper function is applied to each input record.
+
+Output: Emits zero or more intermediate key/value pairs.
+
+Analogy: You have a giant pile of mail. The Map job is like having 100 people (mappers) simultaneously sorting the mail into piles based on the destination city (the key).
+
+🌀 Shuffle & Sort Phase:
+
+This phase is automatic and handled by the framework (like Hadoop or mrjob).
+
+It collects all the intermediate key/value pairs from all mappers.
+
+It groups all values that share the same key.
+
+Analogy: All the small "Pune" piles are collected from the 100 sorters and combined into one giant "Pune" mailbag. This bag is then handed to the "Pune" postal worker.
+
+📉 Reduce Phase:
+
+Input: Takes a single key and an iterator (a list) of all values associated with that key.
+
+Process: A reducer function is applied once for each unique key. It aggregates, summarizes, or transforms the list of values.
+
+Output: Emits the final output for that key.
+
+Analogy: The "Pune" postal worker (reducer) takes the "Pune" mailbag (key: "Pune", values: [all letters for Pune]) and processes them (e.g., counts them, sorts them by street) to produce a final delivery report (the output).
+
+What is mrjob?
+
+mrjob is a Python library from Yelp that lets you write MapReduce jobs in pure Python and run them.
+
+Locally: It simulates the MapReduce flow on your local machine (which is what you're doing). This is great for development and testing.
+
+On a Cluster: It can also run the same Python code on a real Hadoop or EMR (Amazon Web Services) cluster to process massive datasets.
+
+💻 Code Explanation: Line-by-Line
+Here is a detailed breakdown of your log.py script.
+
+Imports
+Python
+
+from mrjob.job import MRJob
+from datetime import datetime
+import json
+from mrjob.job import MRJob: Imports the main MRJob class. Your LogAnalysis class will inherit from this.
+
+from datetime import datetime: Imports the datetime object, which is needed to parse timestamps and calculate time differences (timedelta).
+
+import json: Imports the JSON library. This is a clever trick to pass complex data (like a tuple) from the mapper to the reducer, as the MapReduce framework only officially passes text (strings).
+
+Class Definition
+Python
+
+class LogAnalysis(MRJob):
+This line defines your job. By inheriting from MRJob, this class gets all the necessary machinery to run as a MapReduce job.
+
+Mapper Function
+The mapper's job is to read lines, parse them, and emit intermediate key/value pairs.
+
+Python
+
+    def mapper(self, _, line):
+This defines the mapper function. It's called once for every line in system_logs.txt.
+
+self: Standard Python class instance.
+
+_: This is the input key. By default, mrjob provides the line number, but we don't need it, so we use _ as a placeholder variable.
+
+line: This is the input value, which is the actual text of the log line (e.g., "user7 2025-10-22T13:01:00 login").
+
+Python
+
+        parts = line.strip().split()
+line.strip(): Removes any leading/trailing whitespace (like newlines).
+
+.split(): Splits the string into a list of strings based on spaces.
+
+Example: parts becomes ['user7', '2025-10-22T13:01:00', 'login'].
+
+Python
+
+        if len(parts) == 3:
+A simple validation check. It ensures the line has exactly three parts. If a line is empty or malformed, it will be skipped.
+
+Python
+
+            user, timestamp, action = parts
+This is Python's "list destructuring." It unpacks the 3 elements from the parts list into three separate variables.
+
+user = 'user7'
+
+timestamp = '2025-10-22T13:01:00'
+
+action = 'login'
+
+Python
+
+            yield user, json.dumps((timestamp, action))
+This is the most important line of the mapper.
+
+yield: This is how mappers (and reducers) emit output.
+
+user: This is the intermediate key. The Shuffle & Sort phase will now group all events by this user key.
+
+json.dumps((timestamp, action)): This is the intermediate value.
+
+We first create a tuple: ('2025-10-22T13:01:00', 'login').
+
+json.dumps(...) converts this tuple into a JSON string: '["2025-10-22T13:01:00", "login"]'.
+
+We must do this because the intermediate value must be a string. This allows us to "package" two pieces of information (time and action) together.
+
+Reducer Function
+The reducer's job is to process all the values for a single key.
+
+Python
+
+    def reducer(self, user, values):
+This defines the reducer function. It is called once for each unique key (e.g., once for "user7", once for "user10", etc.).
+
+self: Standard Python class instance.
+
+user: The key being processed (e.g., "user7").
+
+values: An iterator (like a lazy list) of all the values that the mappers yielded for this user.
+
+For "user7", values would be an iterator over:
+
+'["2025-10-22T13:01:00", "login"]'
+
+'["2025-10-29T11:02:00", "login"]'
+
+'["2025-10-29T21:24:00", "logout"]'
+
+Python
+
+        events = []
+        for v in values:
+            timestamp, action = json.loads(v)
+            events.append((timestamp, action))
+We can't process events as they come in because they might be out of order. We must sort them by time first.
+
+This loop builds an in-memory list called events.
+
+json.loads(v): Reverses the json.dumps from the mapper. It parses the JSON string back into a Python object (which was our original tuple).
+
+events.append(...): Adds the (timestamp, action) tuple to the list.
+
+After the loop, events for "user7" would be: [('2025-10-22T13:01:00', 'login'), ('2025-10-29T11:02:00', 'login'), ('2025-10-29T21:24:00', 'logout')]
+
+Python
+
+        total = 0
+        login_time = None
+Initializes two "state" variables for our logic.
+
+total: An accumulator for the total seconds this user was logged in.
+
+login_time: A variable to store the timestamp of a "login" event. It's None if the user is currently considered logged out.
+
+Python
+
+        for timestamp, action in sorted(events):
+This is the core logic. sorted(events) sorts the list of tuples.
+
+Since the timestamp is the first item in each tuple, Python's default sort organizes the events chronologically.
+
+The loop now processes events in the correct time order.
+
+Python
+
+            try:
+                t = datetime.fromisoformat(timestamp)
+            except ValueError:
+                continue 
+Parses the timestamp string (e.g., '2025-10-22T13:01:00') into a real datetime object that we can do math with.
+
+The try...except block is good practice to skip any badly formatted timestamps.
+
+Python
+
+            if action == "login":
+                login_time = t
+State Change: If the event is a "login", we "start the clock" by storing its time in login_time.
+
+Note: If two "login" events happen in a row, this logic simply overwrites the first one. It correctly assumes the last login time is the start of the session.
+
+Python
+
+            elif action == "logout" and login_time:
+State Change: If the event is a "logout" AND we are in a logged-in state (meaning login_time is not None).
+
+Python
+
+                total += (t - login_time).total_seconds()
+t - login_time: This calculates the time difference, resulting in a timedelta object.
+
+.total_seconds(): Converts that timedelta into seconds (e.g., 37320.0).
+
+total += ...: Adds this session's duration to the user's total.
+
+Python
+
+                login_time = None
+Resets the state. The user is now "logged out," and we are ready to look for the next "login" event. This prevents a "logout" from being counted twice.
+
+Python
+
+        yield user, round(total / 3600, 2)
+This is the final output for this user (reducer).
+
+total / 3600: Converts the total seconds into hours.
+
+round(..., 2): Rounds the result to 2 decimal places.
+
+yield user, ...: Emits the final key/value pair (e.g., "user7", 10.37). This is what gets written to your output.txt file.
+
+Execution Block
+Python
+
+if __name__ == "__main__":
+    LogAnalysis.run()
+if __name__ == "__main__":: This is standard Python boilerplate. It means "run the code inside this block only if the script is executed directly" (not imported as a module).
+
+LogAnalysis.run(): This is the mrjob command that kicks off the entire MapReduce job. It handles reading stdin (your system_logs.txt), running the mappers, shuffling, running the reducers, and printing the final output to stdout (which you redirect to output.txt).
+
+🚀 Execution Commands Explained
+This is how you run your job.
+
+py -3.11 -m venv venv
+
+Creates a Python 3.11 virtual environment in a folder named venv. This is a clean, isolated space for your project's libraries.
+
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+A Windows PowerShell command. By default, PowerShell blocks running scripts (like activate) for security. This command loosens the policy to allow running local scripts.
+
+.\venv\Scripts\activate
+
+Activates the virtual environment. Your command prompt changes to show (venv). Now, pip and python commands will use the versions inside the venv folder.
+
+pip install mrjob
+
+Installs the mrjob library only inside your active venv.
+
+python log.py system_logs.txt > output.txt
+
+python log.py: Executes your script.
+
+system_logs.txt: mrjob is smart enough to see this argument and use it as the input file (it simulates stdin).
+
+>: This is a standard command-line redirect. It takes all the standard output (stdout)—which is whatever your reducers yield—and writes it into the file output.txt instead of printing it to the screen.
+
+notepad output.txt
+
+Opens the final result file in Notepad.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Exp 3: 
+
+
+Here is a detailed explanation of your Python script, including the underlying theory of Hadoop and Hive that it's built to simulate.
+
+🎯 High-Level Summary: What Does This Code Do?
+This script uses the pandas library to perform data analysis on a forestfires.csv file. It's structured as a simulation to demonstrate the concepts of two different big data technologies:
+
+Task A (Hadoop): It manually simulates the MapReduce programming model (the core of Hadoop) to calculate the average temperature for each month.
+
+Task B (Hive): It simulates a HiveQL (SQL-like) query to find the average burned area and wind speed per month, showing a higher-level data mining approach.
+
+📚 Theory: Hadoop & Hive (For Your Exam)
+To understand the code, you first need to understand what Hadoop and Hive are.
+
+1. What is Hadoop (MapReduce)?
+Hadoop is a framework for storing and processing massive datasets (terabytes or petabytes) across clusters of computers. Its core processing model is called MapReduce.
+
+A MapReduce job breaks a big problem into three phases:
+
+📍 Map Phase:
+
+A mapper function runs on every single record in the dataset.
+
+Its job is to read the data, "map" it, and emit an intermediate <key, value> pair.
+
+Analogy: You're counting votes. The Map job is every individual poll worker (mapper) looking at one ballot (record) and outputting a key-value pair, like <'candidate_A', 1>, <'candidate_B', 1>, <'candidate_A', 1>.
+
+🌀 Shuffle & Sort Phase:
+
+This phase is automatic and runs between Map and Reduce.
+
+It collects all the intermediate key-value pairs from all mappers and groups them by their key.
+
+Analogy: All the little <'candidate_A', 1> pairs are collected and put into one big pile (a list): <'candidate_A', [1, 1, 1, ...]> and <'candidate_B', [1, 1, 1, ...]>.
+
+📉 Reduce Phase:
+
+A reducer function runs once for each unique key.
+
+It takes the key and its associated list of values and "reduces" them to a single output.
+
+Analogy: The head poll worker (reducer) gets the "candidate_A" pile and its list of [1, 1, 1, ...]. They sum this list to get the final count (e.g., 3). The output is <'candidate_A', 3>.
+
+2. What is Hive?
+Hive is a data warehouse system built on top of Hadoop.
+
+Problem: Writing MapReduce jobs in code (like Java or Python) is complex and slow for simple analysis (like finding an average).
+
+Hive's Solution: It provides an SQL-like query language called HiveQL.
+
+You write a simple query: SELECT month, AVG(temp) FROM table GROUP BY month;
+
+Hive's "compiler" automatically translates this SQL query into a complex MapReduce job (like the one you simulated in Task A) and runs it on the Hadoop cluster for you.
+
+It's a high-level abstraction for data mining and analysis, making it much faster and easier for analysts to use.
+
+💻 Code Explanation: Line-by-Line
+Here is a detailed breakdown of your script.
+
+Python
+
+#pip install pandas
+
+import pandas as pd
+from collections import defaultdict
+import pandas as pd: Imports the pandas library, the standard tool in Python for data analysis. We give it the alias pd. A pandas DataFrame is the main object, which acts like a powerful, in-memory spreadsheet or SQL table.
+
+from collections import defaultdict: Imports defaultdict. This is a special kind of dictionary. When you try to access a key that doesn't exist, it automatically creates that key and assigns it a "default" value (in our case, an empty list), avoiding KeyError exceptions.
+
+Load Dataset
+Python
+
+# ============================================================
+# Load Dataset
+# ============================================================
+df = pd.read_csv("forestfires.csv")
+print("✅ Loaded Dataset:\n", df.head(), "\n")
+df = pd.read_csv("forestfires.csv"): This line reads your CSV file and loads all its data into a DataFrame object named df.
+
+df.head(): This is a function that returns the first 5 rows of the DataFrame, letting you quickly check that the data loaded correctly.
+
+🅐 TASK (a) – MapReduce Simulation (Hadoop)
+This section manually re-creates the Map-Shuffle-Reduce logic.
+
+Python
+
+# Mapper Stage (Python + Hadoop logic)
+mapped_data = [(row["Month"], row["Temperature_Celsius"]) for _, row in df.iterrows()]
+This is the MAP Phase.
+
+df.iterrows(): This is a pandas function that loops through the DataFrame row by row.
+
+for _, row in ...: In each loop, _ gets the row's index (which we don't need), and row gets the entire row's data as a pandas Series (like a dictionary).
+
+row["Month"]: This is our KEY.
+
+row["Temperature_Celsius"]: This is our VALUE.
+
+[(...), (...)]: This is a "list comprehension," a fast way to build a list. The result, mapped_data, is a long list of key-value tuples (pairs), just like a real mapper would produce.
+
+Example mapped_data: [('mar', 18.2), ('oct', 19.5), ('mar', 17.0), ('aug', 22.5), ('aug', 24.1), ...]
+
+Python
+
+# Reducer Stage (Aggregating results like Hadoop Reduce phase)
+reduced = defaultdict(list)
+for month, temp in mapped_data:
+    reduced[month].append(temp)
+This is the SHUFFLE & SORT Phase.
+
+reduced = defaultdict(list): Creates our special dictionary. If we ask for reduced['aug'] and it doesn't exist, it will first create reduced['aug'] = [] and then return the empty list.
+
+for month, temp in mapped_data:: We loop through every <key, value> pair from our mapper.
+
+reduced[month].append(temp): This is the core logic.
+
+It takes the month (e.g., 'aug') as the key.
+
+It finds the list associated with that key (e.g., []).
+
+It appends the temp (e.g., 22.5) to that list.
+
+Result reduced: {'mar': [18.2, 17.0, ...], 'aug': [22.5, 24.1, ...], 'oct': [19.5, ...], ...}. This perfectly simulates the "grouped by key" data that a Reducer receives.
+
+Python
+
+avg_temp_by_month = {m: sum(v) / len(v) for m, v in reduced.items()}
+This is the REDUCE Phase.
+
+{... for m, v in reduced.items()}: This is a "dictionary comprehension." It loops through the reduced dictionary's key/value pairs (m=month, v=list of temps).
+
+sum(v) / len(v): This is the reducer's aggregation logic. It calculates the average of the list of temperatures.
+
+m: ...: It builds a new dictionary where the key is the month and the value is the final calculated average.
+
+Result avg_temp_by_month: {'mar': 17.65, 'aug': 22.53, 'oct': 18.90, ...}
+
+🅑 TASK (b) – Data Mining Simulation (Hive)
+This section shows how to get the same result (and more) using a high-level tool, which is what Hive does.
+
+Python
+
+# Simulating Hive Queries with Pandas groupby (like HiveQL)
+avg_area_by_month = df.groupby("Month")["Burned_Area_hectares"].mean().to_dict()
+avg_wind_by_month = df.groupby("Month")["Wind_Speed_kmh"].mean().to_dict()
+This is the "HiveQL" Query Simulation.
+
+df.groupby("Month"): This single command tells pandas to do the entire Map and Shuffle phase all at once. It groups all rows by their "Month" value.
+
+["Burned_Area_hectares"]: After grouping, it tells pandas we are only interested in this specific column.
+
+.mean(): This is the Reduce phase. It tells pandas to apply the "mean" (average) function to all the values within each group.
+
+.to_dict(): Converts the final pandas result into a simple Python dictionary.
+
+Notice how this one line of code does the exact same work as all the manual steps in Task (a). This is the power of high-level tools like Hive—they abstract away the complexity of MapReduce.
+
+An equivalent HiveQL / SQL query would look like this:
+
+SQL
+
+SELECT 
+    Month, 
+    AVG(Burned_Area_hectares), 
+    AVG(Wind_Speed_kmh) 
+FROM 
+    forestfires
+GROUP BY 
+    Month;
+Final Output
+Python
+
+print("\n🔥 Data Mining Results (Simulated Hive Queries):")
+print("Month\tAvg_BurnedArea\tAvg_WindSpeed")
+for month in sorted(df["Month"].unique()):
+    area = avg_area_by_month.get(month, 0)
+    wind = avg_wind_by_month.get(month, 0)
+    print(f"{month}\t{area:.2f}\t\t{wind:.2f}")
+sorted(df["Month"].unique()): This just gets a clean, sorted list of all unique month names present in the data (e.g., ['apr', 'aug', 'dec', 'feb', ...]).
+
+The for loop iterates through this sorted list to print the results in a clean, alphabetical order.
+
+avg_area_by_month.get(month, 0): Safely gets the value for the month from the dictionary, using a default of 0 if for some reason the month is missing.
+
+print(f"..."): Uses an f-string to format the output into a nice, tab-separated table.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Exp 4:
+
+
+
+This script is a comprehensive showcase of different data visualization techniques in Python. It uses several key libraries to create and save various types of plots, each suited for a different kind of data analysis:
+
+It loads the classic Iris dataset (real data).
+
+It generates a fake Adult dataset (synthetic data).
+
+It then creates 7 different plots to visualize:
+
+1D (Univariate) Data: The distribution of a single variable (Age).
+
+2D (Bivariate) Data: The relationship between two variables (Sepal Length vs. Width).
+
+3D (Trivariate) Data: The relationship between three variables (Sepal Length, Sepal Width, Petal Length).
+
+Temporal Data: A variable's change over time (Hours per Week by Year).
+
+Multidimensional Data: A matrix of all pairwise relationships in a dataset (Iris Pairplot).
+
+Hierarchical Data: The output of a clustering algorithm (Dendrogram).
+
+Relational (Network) Data: The connections between entities (Workclass and Income).
+
+It saves all generated images into a new folder named outputs.
+
+📚 Theory: The Visualization Libraries (For Your Exam)
+Your script uses a "stack" of libraries that work together.
+
+pandas: This is not a plotting library. It's the data manipulation library. Its job is to load, clean, and prepare the data (e.g., read_csv, groupby). Its main data structure is the DataFrame.
+
+matplotlib: This is the foundational plotting library in Python. It's powerful but can be complex. It gives you low-level control over every part of a plot (axes, figures, lines). seaborn and pandas's built-in .plot() both use matplotlib under the hood.
+
+seaborn: This is a high-level statistical visualization library built on top of matplotlib. It makes creating complex, statistically-aware, and beautiful plots (like histplot, scatterplot, pairplot) much easier with less code.
+
+plotly (Express): This is a high-level library for creating interactive plots. Unlike matplotlib/seaborn which create static images, plotly plots can be zoomed, panned, and hovered over (in a web browser). It's also the go-to for easy 3D plots (scatter_3d).
+
+scipy: This is a library for scientific computing. You're using one specific part, scipy.cluster.hierarchy, which contains functions to calculate hierarchical clustering (linkage) and plot it (dendrogram).
+
+networkx: This is the standard library for creating, manipulating, and studying networks (or "graphs"). Its job is to manage the nodes and edges. It has built-in drawing functions (nx.draw) that use matplotlib to visualize the network.
+
+💻 Code Explanation: Line-by-Line
+Here is a detailed breakdown of your script.
+
+Setup and Imports
+Python
+
+# pip install pandas numpy seaborn matplotlib plotly==6.1.1 kaleido==0.2.1 networkx scikit-learn scipy
+import os
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+import plotly.express as px
+import networkx as nx
+pip install ...: (Commented out) This line shows the commands needed to install all required libraries. kaleido is a helper library that plotly needs to save static images (like .png).
+
+import ...: Imports all the libraries, giving them standard aliases (e.g., pd, np, sns).
+
+Python
+
+OUTDIR = "outputs"
+os.makedirs(OUTDIR, exist_ok=True)
+OUTDIR = "outputs": Defines a variable for the output folder name.
+
+os.makedirs(...): Creates the "outputs" directory. exist_ok=True prevents the script from crashing if the folder already exists.
+
+Python
+
+def savefig(fig, name, dpi=150):
+    path = os.path.join(OUTDIR, name)
+    fig.savefig(path, bbox_inches="tight", dpi=dpi)
+    plt.close(fig)
+    print("Saved:", path)
+This defines a helper function to make saving matplotlib/seaborn plots cleaner.
+
+path = os.path.join(OUTDIR, name): Creates the full save path (e.g., outputs/adult_1d_hist_age.png).
+
+fig.savefig(...): Saves the figure object. bbox_inches="tight" crops the saved image to remove extra whitespace. dpi=150 sets the resolution (dots per inch).
+
+plt.close(fig): Very important. This closes the figure in memory. If you don't do this when creating many plots, you can run out of memory.
+
+Data Preparation
+Python
+
+from sklearn.datasets import load_iris
+iris = load_iris(as_frame=True)
+df_iris = iris.frame
+df_iris['species'] = df_iris.target.apply(lambda x: iris.target_names[x])
+from sklearn.datasets import load_iris: Imports the dataset loader from scikit-learn.
+
+iris = load_iris(as_frame=True): Loads the dataset. as_frame=True is a helper that returns the data in a pandas DataFrame structure.
+
+df_iris = iris.frame: Gets the main DataFrame.
+
+df_iris['species'] = ...: This line creates a new column named "species".
+
+iris.target is a column of numbers (0, 1, 2).
+
+iris.target_names is an array ['setosa', 'versicolor', 'virginica'].
+
+.apply(lambda x: ...): This is a mini-function that runs for every value x in the target column. It maps 0 to setosa, 1 to versicolor, etc.
+
+Python
+
+np.random.seed(42)
+df_adult = pd.DataFrame({ ... })
+np.random.seed(42): This fixes the random number generator. By setting a "seed" (42 is just a convention), it guarantees that every time you run this script, np.random will produce the exact same "random" numbers. This is crucial for reproducible results.
+
+df_adult = pd.DataFrame({ ... }): Creates a new DataFrame from scratch using a dictionary.
+
+"age": np.random.randint(18, 70, 200): Creates a column "age" with 200 random integers between 18 and 69.
+
+The other columns (hours_per_week, education_num, income, workclass, year) are created similarly using np.random.
+
+Plot 1: 1D Histogram (Seaborn)
+Python
+
+fig = plt.figure(figsize=(7,4))
+sns.histplot(df_adult['age'], bins=20, kde=True, color="skyblue")
+plt.title("1D Distribution of Age (Adult Dataset)")
+savefig(fig, "adult_1d_hist_age.png")
+fig = plt.figure(...): Creates a blank matplotlib figure "canvas" to draw on, setting its size.
+
+sns.histplot(...): This is the seaborn function for plotting a 1D distribution.
+
+df_adult['age']: The data (a single column).
+
+bins=20: Divides the age range into 20 "bins" or bars.
+
+kde=True: Also plots a Kernel Density Estimate line, which is a smooth curve that estimates the shape of the distribution.
+
+plt.title(...): Adds a title to the plot.
+
+savefig(...): Uses our helper function to save the plot.
+
+Plot 2: 2D Scatterplot (Seaborn)
+Python
+
+fig = plt.figure(figsize=(7,5))
+sns.scatterplot(data=df_iris, x="sepal length (cm)", y="sepal width (cm)", hue="species", palette="Set2")
+plt.title("2D Scatterplot of Iris Features")
+savefig(fig, "iris_2d_scatter.png")
+sns.scatterplot(...): Plots the 2D relationship between two variables.
+
+data=df_iris: The DataFrame to use.
+
+x=..., y=...: The columns to use for the X and Y axes.
+
+hue="species": This is key. It tells seaborn to color the dots based on the "species" column.
+
+palette="Set2": Chooses a specific color palette for the hue.
+
+Plot 3: 3D Scatterplot (Plotly)
+Python
+
+fig3d = px.scatter_3d(
+    df_iris, 
+    x="sepal length (cm)", 
+    y="sepal width (cm)", 
+    z="petal length (cm)", 
+    color="species",
+    title="3D Iris Visualization"
+)
+fig3d.write_image(os.path.join(OUTDIR, "iris_3d.png"))
+print("Saved:", os.path.join(OUTDIR, "iris_3d.png"))
+fig3d = px.scatter_3d(...): This is the plotly.express function for a 3D scatterplot.
+
+The syntax is very similar to seaborn: you pass the data, x, y, z, and a color column (which works like hue).
+
+fig3d.write_image(...): plotly objects are not matplotlib figures, so we cannot use our savefig function. We must use plotly's built-in .write_image() method. This requires the kaleido library.
+
+Plot 4: Temporal Line Plot (Seaborn)
+Python
+
+df_yearly = df_adult.groupby("year")["hours_per_week"].mean().reset_index()
+fig = plt.figure(figsize=(8,4))
+sns.lineplot(data=df_yearly, x="year", y="hours_per_week", marker="o")
+plt.title("Temporal Trend of Hours per Week (Adult Dataset)")
+savefig(fig, "adult_temporal_year_hours.png")
+df_yearly = ...: This line first performs data aggregation using pandas.
+
+df_adult.groupby("year"): Groups all 200 rows by their "year".
+
+["hours_per_week"].mean(): For each year-group, calculates the mean (average) of "hours_per_week".
+
+.reset_index(): Converts the groupby result back into a clean DataFrame. df_yearly now has one row for each year and its average hours.
+
+sns.lineplot(...): Plots a temporal trend.
+
+marker="o": Adds a circle marker at each data point (each year).
+
+Plot 5: Multidimensional Pairplot (Seaborn)
+Python
+
+pair = sns.pairplot(df_iris, hue="species", diag_kind="kde")
+pair.fig.suptitle("Multidimensional Visualization of Iris Dataset", y=1.02)
+pair.savefig(os.path.join(OUTDIR, "iris_multidimensional_pairplot.png"))
+plt.close("all")
+print("Saved:", os.path.join(OUTDIR, "iris_multidimensional_pairplot.png"))
+pair = sns.pairplot(...): This is a powerful seaborn function that creates a matrix of plots to visualize all pairwise relationships in the data.
+
+The plots on the diagonal show the 1D distribution of that single variable. diag_kind="kde" makes these diagonal plots Kernel Density Estimates (like in Plot 1).
+
+The plots off the diagonal are 2D scatterplots (like in Plot 2) for every pair of variables.
+
+hue="species": Colors all the subplots by species.
+
+pair.fig.suptitle(...): A pairplot object is slightly different, so we add a super title to the whole figure. y=1.02 adjusts its position slightly.
+
+pair.savefig(...): The pairplot object has its own .savefig method.
+
+plt.close("all"): Closes all figures currently in memory, just to be safe.
+
+Plot 6: Hierarchical Dendrogram (SciPy)
+Python
+
+from scipy.cluster.hierarchy import dendrogram, linkage
+X = df_iris[["sepal length (cm)", "sepal width (cm)", "petal length (cm)", "petal width (cm)"]]
+linked = linkage(X, method="ward")
+fig = plt.figure(figsize=(10, 5))
+dendrogram(linked, labels=df_iris['species'].values, leaf_rotation=90, leaf_font_size=8)
+plt.title("Hierarchical Clustering Dendrogram (Iris Dataset)")
+savefig(fig, "iris_dendrogram.png")
+from scipy.cluster.hierarchy ...: Imports the specific functions needed.
+
+X = df_iris[[...]]: Creates a new DataFrame X containing only the four numerical feature columns used for clustering.
+
+linked = linkage(X, method="ward"): This is the calculation step. It performs hierarchical clustering using the "ward" method. The linked object contains the "tree" structure of how the data points are clustered together.
+
+fig = plt.figure(...): Creates a new matplotlib figure.
+
+dendrogram(...): This is the plotting step. It takes the linked structure and draws it as a tree diagram (a dendrogram).
+
+labels=...: Uses the "species" column to label the leaves of the tree.
+
+Plot 7: Network Graph (NetworkX)
+Python
+
+G = nx.Graph()
+for wc in df_adult['workclass'].unique():
+    for inc in df_adult['income'].unique():
+        G.add_edge(wc, inc, weight=np.random.randint(1,10))
+G = nx.Graph(): Creates an empty graph object.
+
+The nested for loops iterate through every unique "workclass" (e.g., "Private", "Self-emp") and every unique "income" (e.g., ">50K", "<=50K").
+
+G.add_edge(wc, inc, ...): Builds the network. It creates an "edge" (a line) between a workclass node and an income node (e.g., an edge from "Private" to ">50K"). weight=... adds some random data to that edge.
+
+Python
+
+fig = plt.figure(figsize=(6,6))
+pos = nx.spring_layout(G)
+nx.draw(G, pos, with_labels=True, node_size=2000, node_color="lightgreen", font_size=12, width=2)
+plt.title("Network Visualization of Workclass vs Income")
+savefig(fig, "adult_network.png")
+pos = nx.spring_layout(G): This is a layout algorithm. It calculates the (x, y) coordinates for each node to make the graph look good (it's like a physics simulation where nodes repel each other).
+
+nx.draw(G, pos, ...): This is the plotting step. It draws the graph G onto the matplotlib figure using the pos coordinates and the specified styling options (labels, node size, color, etc.).
+
+savefig(...): Saves the final network graph.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Exp 5::
+
+
+
+
+
+
+
+
+
+
+This script builds and tests three different machine learning models to predict a student's "Chance of Admit" to graduate school.
+
+It uses a student's GRE Score, TOEFL Score, and CGPA as inputs. It then follows the standard machine learning workflow:
+
+Loads the data.
+
+Splits the data into a "training" set (for learning) and a "testing" set (for evaluation).
+
+Trains three models (Linear Regression, Decision Tree, Random Forest) on the training data.
+
+Evaluates how well each model performs on the unseen testing data using the R² score.
+
+Uses the best-performing model (Random Forest) to predict the admission chance for a new, sample student.
+
+📚 Theory: Predictive Modeling (For Your Exam)
+This script is a classic example of Supervised Machine Learning, specifically a Regression problem.
+
+Supervised Learning: This means we are "supervising" the model by training it with data that already has the correct answers. We give it both the inputs (X) and the outputs (y), and the model's job is to learn the relationship between them.
+
+Regression vs. Classification:
+
+Regression (this script): Your goal is to predict a continuous numerical value. (e.g., Chance of Admit which can be 0.75, 0.82, 0.91, etc.).
+
+Classification: Your goal is to predict a discrete category or label. (e.g., "Admitted" or "Rejected").
+
+The Three Models Explained
+Linear Regression:
+
+Analogy: Finding the "line of best fit" on a graph.
+
+How it works: This model assumes there is a linear relationship between the features and the target. It tries to find the best possible equation, like: Chance = (m1 * GRE) + (m2 * TOEFL) + (m3 * CGPA) + c
+
+It's simple, fast, and easy to interpret, but it can be inaccurate if the true relationship isn't a straight line.
+
+Decision Tree Regressor:
+
+Analogy: A flowchart of "if-then" questions.
+
+How it works: This model splits the data by asking a series of questions to get to a final prediction.
+
+Example: "Is CGPA > 8.5?"
+
+YES: "Is TOEFL > 110?"
+
+YES: "Predict 92% chance"
+
+NO: "Predict 85% chance"
+
+NO: "Is GRE < 310?"
+
+...and so on.
+
+Risk: A single tree can easily overfit—it learns the training data perfectly (like memorizing the textbook) but fails on new, unseen data (the final exam).
+
+Random Forest Regressor:
+
+Analogy: An "ensemble" or a "committee" of many Decision Trees.
+
+How it works: To prevent the overfitting of a single tree, a Random Forest builds many trees (e.g., n_estimators=100). Each tree is trained on a random subset of the data.
+
+To make a prediction, it asks all 100 trees for their opinion and then averages their answers. This "wisdom of the crowd" approach is much more accurate and stable than any single tree.
+
+Key Concepts
+Train-Test Split: This is the most fundamental concept. We split our dataset to simulate a real-world scenario.
+
+Training Set (80%): The "practice problems" or "textbook" that the model learns from.
+
+Test Set (20%): The "final exam" of unseen data. We use this to get an honest score of how well the model generalizes to new data it has never seen before.
+
+R² Score (R-squared): This is our evaluation metric.
+
+What it is: The "Coefficient of Determination."
+
+What it means: It measures how much of the change (variance) in the Chance of Admit can be explained by our input features (GRE, TOEFL, CGPA).
+
+How to read it:
+
+1.0: A perfect score. The model explains 100% of the variance.
+
+0.82: A good score. The model explains 82% of the variance.
+
+0.0: A useless model. It's no better than just guessing the average admission chance for every student.
+
+💻 Code Explanation: Line-by-Line
+Here is a detailed breakdown of your script.
+
+Imports
+Python
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import r2_score
+pandas: For loading and manipulating the dataset.
+
+train_test_split: The scikit-learn function to automatically split our data.
+
+LinearRegression, DecisionTreeRegressor, RandomForestRegressor: These import the three different model "blueprints" or "classes."
+
+r2_score: The function to calculate the R² evaluation metric.
+
+STEP 1: Load dataset
+Python
+
+df = pd.read_csv("Synthetic_Graduate_Admissions.csv")
+df.columns = [col.strip() for col in df.columns]
+
+print("✅ Loaded Dataset:")
+print(df.head(), "\n")
+pd.read_csv(...): Reads your file into a pandas DataFrame.
+
+df.columns = [col.strip() for col in df.columns]: A very useful data cleaning step. It loops through all column names (e.g., " GRE Score ") and removes any leading/trailing whitespace (.strip()) to prevent errors (e.g., it becomes "GRE Score").
+
+df.head(): Prints the first 5 rows to confirm the data is loaded.
+
+STEP 2: Select features (X) and target (y)
+Python
+
+X = df[['GRE Score', 'TOEFL Score', 'CGPA']]
+y = df['Chance of Admit']
+This is where you define the "problem" for the supervised model.
+
+X: The features (or independent variables). These are the inputs we use to make a prediction. We use [[...]] (double brackets) to select multiple columns, which keeps X as a DataFrame.
+
+y: The target (or dependent variable). This is the single answer we want to predict. We use [...] (single brackets) which makes y a pandas Series.
+
+STEP 3: Split into training and testing data
+Python
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+This one line unpacks the data into four new variables.
+
+X, y: The data to split.
+
+test_size=0.2: Specifies that 20% of the data should be saved for the _test set, leaving the other 80% for the _train set.
+
+random_state=42: This is an essential parameter for reproducibility. It ensures that the random shuffling and splitting of the data is the same every time you run the script. This allows you to get consistent results and fairly compare your models.
+
+STEP 4: Train three predictive models
+This section follows the standard scikit-learn pattern:
+
+Initialize the model (create a blank "brain").
+
+Fit the model (train it on the _train data).
+
+Predict with the model (use the trained model to make predictions on the unseen _test data).
+
+Python
+
+# 🔹 Linear Regression
+lr = LinearRegression()
+lr.fit(X_train, y_train)
+lr_pred = lr.predict(X_test)
+
+# 🔹 Decision Tree
+dt = DecisionTreeRegressor(random_state=42)
+dt.fit(X_train, y_train)
+dt_pred = dt.predict(X_test)
+
+# 🔹 Random Forest
+rf = RandomForestRegressor(n_estimators=100, random_state=42)
+rf.fit(X_train, y_train)
+rf_pred = rf.predict(X_test)
+lr.fit(X_train, y_train): This is the "learning" step. The lr model looks at all the X_train data and its corresponding y_train answers and finds the best linear equation.
+
+lr_pred = lr.predict(X_test): The trained lr model is given X_test (with no answers) and generates its best-guess predictions.
+
+n_estimators=100: This is a hyperparameter for the Random Forest. It tells the model to build a "forest" of 100 individual decision trees.
+
+STEP 5: Evaluate model performance
+Python
+
+print("🎯 Model Performance (R² Score):")
+print("Linear Regression :", round(r2_score(y_test, lr_pred), 3))
+print("Decision Tree     :", round(r2_score(y_test, dt_pred), 3))
+print("Random Forest     :", round(r2_score(y_test, rf_pred), 3))
+This is the "final exam" grading.
+
+r2_score(y_test, lr_pred): This function compares the true answers (y_test) to the model's predictions (lr_pred) and calculates the R² score.
+
+The results will likely show that Random Forest has the highest R² score, as it is generally the most powerful and robust of the three.
+
+STEP 6: Predict for a sample student
+Python
+
+sample = [[320, 110, 8.5]]  # GRE, TOEFL, CGPA
+pred = rf.predict(sample)
+print(f"\n📊 Predicted Chance of Admission for sample student: {pred[0]*100:.2f}%")
+sample = [[...]]: We create a new, single data point. It must be in double brackets ([[...]]) because scikit-learn models expect a 2D array (a list of samples).
+
+pred = rf.predict(sample): We use our best model (the trained Random Forest, rf) to make a prediction on this new sample.
+
+pred: The output pred will be a list/array, e.g., [0.8735].
+
+pred[0]: We get the first (and only) item from the list: 0.8735.
+
+*100: We convert it to a percentage: 87.35.
+
+:.2f: The f-string formatting rounds it to two decimal places.
+
 
