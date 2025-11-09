@@ -1,1 +1,43 @@
+#pip install pandas
 
+import pandas as pd
+from collections import defaultdict
+
+# ============================================================
+# Load Dataset
+# ============================================================
+df = pd.read_csv("forestfires.csv")
+print("✅ Loaded Dataset:\n", df.head(), "\n")
+
+# ============================================================
+# 🅐 TASK (a) – MapReduce Data Analysis using Hadoop + Python
+# ============================================================
+# Mapper Stage (Python + Hadoop logic)
+mapped_data = [(row["Month"], row["Temperature_Celsius"]) for _, row in df.iterrows()]
+
+# Reducer Stage (Aggregating results like Hadoop Reduce phase)
+reduced = defaultdict(list)
+for month, temp in mapped_data:
+    reduced[month].append(temp)
+
+avg_temp_by_month = {m: sum(v) / len(v) for m, v in reduced.items()}
+
+print("🌡️ Average Temperature per Month (MapReduce Stage):")
+for month, avg_temp in sorted(avg_temp_by_month.items()):
+    print(f"{month}\t{avg_temp:.2f}")
+
+# ============================================================
+# 🅑 TASK (b) – Data Mining using Hive (SQL-style Aggregation)
+# ============================================================
+# Simulating Hive Queries with Pandas groupby (like HiveQL)
+avg_area_by_month = df.groupby("Month")["Burned_Area_hectares"].mean().to_dict()
+avg_wind_by_month = df.groupby("Month")["Wind_Speed_kmh"].mean().to_dict()
+
+print("\n🔥 Data Mining Results (Simulated Hive Queries):")
+print("Month\tAvg_BurnedArea\tAvg_WindSpeed")
+for month in sorted(df["Month"].unique()):
+    area = avg_area_by_month.get(month, 0)
+    wind = avg_wind_by_month.get(month, 0)
+    print(f"{month}\t{area:.2f}\t\t{wind:.2f}")
+
+print("\n✅ Python + Hadoop + Hive Simulation Completed Successfully.")
